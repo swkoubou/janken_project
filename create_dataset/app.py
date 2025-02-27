@@ -77,9 +77,16 @@ def save_landmarks():
 
 @app.route('/get_landmarks')
 def get_landmarks():
-    df = pd.read_csv(CSV_FILE)
-    grouped = df.groupby('label').apply(lambda x: x.iloc[:, 1:].values.tolist()).to_dict()
-    return jsonify(grouped)
+    try:
+        df = pd.read_csv(CSV_FILE)
+        grouped = df.groupby('label', group_keys=False).apply(lambda x: x.iloc[:, 1:].values.tolist()).to_dict()
+        print("Grouped data:", grouped)  # デバッグ用
+        return jsonify(grouped)
+    except Exception as e:
+        print("Error:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+
 
 if __name__ == "__main__":
     app.run(debug=True, threaded=True)
