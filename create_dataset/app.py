@@ -39,6 +39,8 @@ def generate_frames():
                 for landmark in hand_landmarks.landmark:
                     landmarks_data.append({"x": landmark.x, "y": landmark.y})
 
+        print(landmarks_data)
+
         _, buffer = cv2.imencode('.jpg', frame)
         frame = buffer.tobytes()
 
