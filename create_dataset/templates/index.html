@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>じゃんけんデータ収集</title>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <h1>じゃんけんデータ収集</h1>
@@ -15,9 +14,5 @@
     <button onclick="saveLandmarks(1)">チョキ</button>
     <button onclick="saveLandmarks(2)">パー</button>
 
-    <h2>グー・チョキ・パー 座標グラフ</h2>
-    <canvas id="landmarksChart" width="400" height="400"></canvas>
-
-    <button onclick="fetchLandmarks()">座標データ取得</button>
 </body>
 </html>
