@@ -5,6 +5,13 @@ import numpy as np
 import joblib
 import json
 from multiprocessing import shared_memory
+import sys
+import os
+
+# 上位ディレクトリをPythonのモジュール検索パスに追加
+sys.path.append(os.path.abspath("../train_handshape"))
+
+from train import DeepNeuralNetwork
 
 # Flaskアプリケーションの初期化
 app = Flask(__name__)
