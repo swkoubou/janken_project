@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import LabelEncoder
 import joblib
 
 # ====== 1. 活性化関数 ======
@@ -89,12 +90,16 @@ class DeepNeuralNetwork:
 
 # ====== 7. データの準備と学習 ======
 if __name__ == "__main__":
-    csv_file = 'hand_landmarks.csv'
+    # データを読み込む
+    df = pd.read_csv("data/hand_landmarks.csv")
     
-    df = pd.read_csv(csv_file)
-    
-    X = df.iloc[:, 1:].values  # NumPy 配列に変換
+    # 特徴量（X）とラベル（y）に分ける
+    X = df.drop('label', axis=1).values
     y = df['label'].values
+    
+    # ラベルを数値にエンコード
+    label_encoder = LabelEncoder()
+    y_encoded = label_encoder.fit_transform(y)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=40)
 
@@ -102,7 +107,7 @@ if __name__ == "__main__":
     print("X_test shape:", X_test.shape)
 
 
-    model = DeepNeuralNetwork(42)
+    model = DeepNeuralNetwork(63)
     model.train(X_train, y_train, epochs=1000, batch_size=32)
 
     y_pred = model.predict(X_test)

@@ -30,29 +30,29 @@ except FileNotFoundError:
     exit()
 
 # 共有メモリの作成（21点のx, y座標 * 2（float64））
-shm = shared_memory.SharedMemory(create=True, size=21 * 2 * 8)  # float64 × 42
-shm_array = np.ndarray((21, 2), dtype=np.float64, buffer=shm.buf)
+shm = shared_memory.SharedMemory(create=True, size=21 * 3 * 8)  # float64 × 42
+shm_array = np.ndarray((21, 3), dtype=np.float64, buffer=shm.buf)
 
 # 手のランドマーク座標を予測用の形式に変換する関数
 def preprocess_landmarks(landmarks):
     if not landmarks:
-        return np.zeros((1, 42))  # ランドマークがない場合はゼロベクトルを返す
+        return np.zeros((1, 63))  # ランドマークがない場合はゼロベクトルを返す
     try:
-        data = np.array([[lm.x, lm.y] for lm in landmarks]).flatten().reshape(1, -1)
+        data = np.array([[lm.x, lm.y, lm.z] for lm in landmarks]).flatten().reshape(1, -1)
         return data
     except AttributeError:
         # ランドマークの形式が正しくない場合の処理
-        return np.zeros((1, 42))
+        return np.zeros((1, 63))
 
 # 手の形を分類する関数
 def classify_hand(landmarks):
     if not landmarks:
         return "検出なし"
     try:
-        print("classify_hand に渡された landmarks:", landmarks)
+        #print("classify_hand に渡された landmarks:", landmarks)
         processed_landmarks = preprocess_landmarks(landmarks)
-        print("processed_landmarks:", processed_landmarks)
-        if processed_landmarks.shape == (1, 42):
+        #print("processed_landmarks:", processed_landmarks)
+        if processed_landmarks.shape == (1, 63):
             prediction = model.predict(processed_landmarks)
             # ラベルを具体的なジェスチャー名にマッピングする辞書を作成する
             gesture_map = {
@@ -95,6 +95,7 @@ def generate_frames():
                 for i, landmark in enumerate(hand_landmarks.landmark):
                     shm_array[i, 0] = landmark.x
                     shm_array[i, 1] = landmark.y
+                    shm_array[i, 2] = landmark.z
                     landmarks.append(landmark) # landmarkオブジェクトをそのまま追加
 
                 if landmarks:

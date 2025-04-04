@@ -1,98 +1,89 @@
-from flask import Flask, render_template, Response, request, jsonify
+#pip install opencv-python mediapipe pandas scikit-learn
+
 import cv2
 import mediapipe as mp
-import csv
-import threading
-import os
-import json
 import pandas as pd
-import numpy as np
-from multiprocessing import shared_memory, Process
+import os
 
-app = Flask(__name__)
+csv_file = "data/hand_landmarks.csv"
 
-# MediaPipe Hands 初期化
+# MediaPipe Handsのセットアップ
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
+hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
 mp_drawing = mp.solutions.drawing_utils
 
-# 共有メモリの作成（21点のx, y座標 * 2（float64））
-shm = shared_memory.SharedMemory(create=True, size=21 * 2 * 8)  # float64 × 42
-shm_array = np.ndarray((21, 2), dtype=np.float64, buffer=shm.buf)
+# カメラのセットアップ
+cap = cv2.VideoCapture(0)
 
-# CSVファイル作成
-CSV_FILE = "hand_landmarks.csv"
-if not os.path.exists(CSV_FILE):
-    with open(CSV_FILE, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['label'] + [f'x{i}' for i in range(21)] + [f'y{i}' for i in range(21)])
+# 手の座標データを収集
+landmarks_data = []
 
-# Webカメラ映像をストリーミング
-def generate_frames():
-    cap = cv2.VideoCapture(0)
+def collect_landmarks(label):
+    global landmarks_data
+    count = 0
+    print(f"\n=== Collecting data for {label} ===")
+    print("Press 'q' to stop collecting...")
+
     while True:
-        success, frame = cap.read()
-        if not success:
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to capture image")
             break
 
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(frame_rgb)
+        frame = cv2.flip(frame, 1)  # 水平方向に反転
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # RGB変換
 
-        landmarks_data = []
+        results = hands.process(image)
+        frame = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)  # BGRに戻す
+
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
+                landmarks = []
+                for lm in hand_landmarks.landmark:
+                    landmarks.extend([lm.x, lm.y, lm.z])
+                landmarks.append(label)
+                landmarks_data.append(landmarks)
                 mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                
-                for i, landmark in enumerate(hand_landmarks.landmark):
-                    shm_array[i, 0] = landmark.x
-                    shm_array[i, 1] = landmark.y
-                    landmarks_data.append({"x": landmark.x, "y": landmark.y})
 
-        # JSONデータも埋め込み
-        _, buffer = cv2.imencode('.jpg', frame)
-        frame = buffer.tobytes()
+            count += 1
+            print(f"Collected {count} images for {label}")
 
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n'
-               b'Content-Type: application/json\r\n\r\n' + json.dumps(landmarks_data).encode() + b'\r\n')
+        cv2.imshow('Hand Landmarks', frame)
 
-    cap.release()
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-# CSV書き込み用スレッド関数
-def save_to_csv(label):
-    with open(CSV_FILE, 'a', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow([label] + shm_array[:, 0].tolist() + shm_array[:, 1].tolist())
+        # ウィンドウが閉じられたら終了
+        if cv2.getWindowProperty('Hand Landmarks', cv2.WND_PROP_VISIBLE) < 1:
+            break
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+    print(f"\nFinished collecting {count} images for {label}.")
 
-@app.route('/video_feed')
-def video_feed():
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    cv2.destroyAllWindows()
+    return
 
-@app.route('/save_landmarks', methods=['POST'])
-def save_landmarks():
-    data = request.json
-    label = data.get('label')
+# フォルダが存在しない場合は作成
+os.makedirs(os.path.dirname(csv_file), exist_ok=True)
 
-    if label is None:
-        return jsonify({"error": "Invalid data"}), 400
+# データ収集
+input("Press Enter to collect data for Rock (グー)...")
+collect_landmarks(0)
 
-    # CSV書き込みを別スレッドで実行
-    threading.Thread(target=save_to_csv, args=(label,)).start()
+input("Press Enter to collect data for Scissors (チョキ)...")
+collect_landmarks(1)
 
-    return jsonify({"message": "Data saved successfully"}), 200
+input("Press Enter to collect data for Paper (パー)...")
+collect_landmarks(2)
 
-@app.route('/get_landmarks')
-def get_landmarks():
-    try:
-        df = pd.read_csv(CSV_FILE)
-        grouped = df.groupby('label', group_keys=False).apply(lambda x: x.iloc[:, 1:].values.tolist()).to_dict()
-        return jsonify(grouped)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# CSVファイルに保存
+try:
+    columns = [f'x{i}' for i in range(21)] + [f'y{i}' for i in range(21)] + [f'z{i}' for i in range(21)] + ['label']
+    df = pd.DataFrame(landmarks_data, columns=columns)
+    df.to_csv(csv_file, index=False)
+    print(f'\nData saved successfully to {csv_file}')
+except Exception as e:
+    print(f'Error saving data: {e}')
 
-if __name__ == "__main__":
-    app.run(debug=True, threaded=True, host='0.0.0.0')
+# リソース解放
+cap.release()
+cv2.destroyAllWindows()
