@@ -1,10 +1,25 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-    <title>Simple Video Feed</title>
+    <meta charset="UTF-8">
+    <title>じゃんけん判定</title>
+    <script>
+        function updateGesture() {
+            fetch("/gesture_data")  // `/gesture_data` エンドポイントから手の判定結果を取得
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById("gesture").innerText = "現在の手: " + data.gesture;
+                })
+                .catch(error => console.error("エラー:", error));
+        }
+
+        setInterval(updateGesture, 500);
+    </script>
 </head>
 <body>
-    <h1>Video Feed</h1>
+    <h1>じゃんけん判定</h1>
+    <!-- <img> タグを使用してビデオフィードを取得 -->
     <img src="{{ url_for('video_feed') }}" width="640" height="480">
+    <h2 id="gesture">現在の手: なし</h2>
 </body>
 </html>

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, jsonify
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -23,7 +23,7 @@ mp_drawing = mp.solutions.drawing_utils
 
 # 学習済みモデルの読み込み
 try:
-    model = joblib.load('hand_gesture_model.pkl')
+    model = joblib.load('../train_handshape/hand_gesture_model.pkl')
     print("学習済みモデルを読み込みました。")
 except FileNotFoundError:
     print("エラー: 学習済みモデル 'hand_gesture_model.pkl' が見つかりません。先にモデルをトレーニングして保存してください。")
@@ -32,6 +32,7 @@ except FileNotFoundError:
 # 共有メモリの作成（21点のx, y座標 * 2（float64））
 shm = shared_memory.SharedMemory(create=True, size=21 * 3 * 8)  # float64 × 42
 shm_array = np.ndarray((21, 3), dtype=np.float64, buffer=shm.buf)
+gesture_shm = shared_memory.SharedMemory(create=True, size=100)
 
 # 手のランドマーク座標を予測用の形式に変換する関数
 def preprocess_landmarks(landmarks):
@@ -81,7 +82,7 @@ def generate_frames():
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(frame_rgb)
 
-        print("results.multi_hand_landmarks:", results.multi_hand_landmarks)
+        #print("results.multi_hand_landmarks:", results.multi_hand_landmarks)
 
         landmarks_data = []
         predicted_gesture = "検出なし"
@@ -103,6 +104,10 @@ def generate_frames():
         else:
             print("手の検出に失敗しました")
 
+        # 予測結果を共有メモリに保存
+        encoded_gesture = predicted_gesture.encode('utf-8')
+        gesture_shm.buf[:100] = encoded_gesture.ljust(100, b'\x00')
+
         # JSONデータも埋め込み
         _, buffer = cv2.imencode('.jpg', frame)
         frame = buffer.tobytes()
@@ -123,6 +128,11 @@ def index():
 @app.route('/video_feed')
 def video_feed():
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/gesture_data')
+def gesture_data():
+    predicted_gesture = gesture_shm.buf[:100].tobytes().decode().strip('\x00')
+    return jsonify({"gesture": predicted_gesture})
 
 if __name__ == "__main__":
     app.run(debug=True, threaded=True)

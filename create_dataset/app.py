@@ -30,6 +30,9 @@ def collect_landmarks(label):
             print("Failed to capture image")
             break
 
+        # 画像保存
+        cv2.imwrite(f'images/{label}/{count}.png', frame)
+
         frame = cv2.flip(frame, 1)  # 水平方向に反転
         image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # RGB変換
 
