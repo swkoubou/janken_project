@@ -1,4 +1,5 @@
 from flask import Flask, render_template, Response, jsonify
+from tensorflow.keras.models import load_model
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -8,10 +9,6 @@ from multiprocessing import shared_memory
 import sys
 import os
 
-# 上位ディレクトリをPythonのモジュール検索パスに追加
-sys.path.append(os.path.abspath("../train_handshape"))
-
-from train import DeepNeuralNetwork
 
 # Flaskアプリケーションの初期化
 app = Flask(__name__)
@@ -23,7 +20,8 @@ mp_drawing = mp.solutions.drawing_utils
 
 # 学習済みモデルの読み込み
 try:
-    model = joblib.load('../train_handshape/hand_gesture_model.pkl')
+    model = load_model('../train_handshape/hand_gesture_model_tf.h5')
+    label_encoder = joblib.load('../train_handshape/label_encoder.pkl')
     print("学習済みモデルを読み込みました。")
 except FileNotFoundError:
     print("エラー: 学習済みモデル 'hand_gesture_model.pkl' が見つかりません。先にモデルをトレーニングして保存してください。")
@@ -33,6 +31,15 @@ except FileNotFoundError:
 shm = shared_memory.SharedMemory(create=True, size=21 * 3 * 8)  # float64 × 42
 shm_array = np.ndarray((21, 3), dtype=np.float64, buffer=shm.buf)
 gesture_shm = shared_memory.SharedMemory(create=True, size=100)
+
+# ラベルを具体的なジェスチャー名にマッピングする辞書を作成する
+gesture_map = {
+    0: "グー",
+    1: "チョキ",
+    2: "パー",
+    # 必要に応じて他のラベルとジェスチャーの対応を追加
+}
+
 
 # 手のランドマーク座標を予測用の形式に変換する関数
 def preprocess_landmarks(landmarks):
@@ -55,16 +62,10 @@ def classify_hand(landmarks):
         #print("processed_landmarks:", processed_landmarks)
         if processed_landmarks.shape == (1, 63):
             prediction = model.predict(processed_landmarks)
-            # ラベルを具体的なジェスチャー名にマッピングする辞書を作成する
-            gesture_map = {
-                0: "グー",
-                1: "チョキ",
-                2: "パー",
-                # 必要に応じて他のラベルとジェスチャーの対応を追加
-            }
-            result = gesture_map.get(prediction[0], "不明")
+            predicted_class = int(np.argmax(prediction))
+            result = gesture_map.get(predicted_class, "不明")
             print("予測結果:", prediction, "ジェスチャー:", result)
-            return gesture_map.get(prediction[0], "不明")
+            return gesture_map.get(predicted_class, "不明")
         else:
             return "ランドマークデータの形式が不正です"
     except Exception as e:

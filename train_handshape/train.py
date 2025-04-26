@@ -1,119 +1,64 @@
-import numpy as np
 import pandas as pd
+import numpy as np
+import tensorflow as tf
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score
 import joblib
 
-# ====== 1. 活性化関数 ======
-def relu(x):
-    return np.maximum(0, x)
+# ====== 1. データの読み込みと前処理 ======
+df = pd.read_csv("hand_landmarks.csv")
 
-def relu_derivative(x):
-    return (x > 0).astype(float)
+# 特徴量とラベルに分ける
+X = df.drop('label', axis=1).values
+y = df['label'].values
 
-def softmax(x):
-    exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))  # 数値的安定性
-    return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+# ラベルエンコーディング
+label_encoder = LabelEncoder()
+y_encoded = label_encoder.fit_transform(y)
 
-# ====== 2. ネットワークの初期化 ======
-class DeepNeuralNetwork:
-    def __init__(self, input_size=40, hidden_sizes=[64, 64, 32, 32, 16], output_size=3, learning_rate=0.01):
-        self.learning_rate = learning_rate
-        
-        # 重みとバイアスの初期化（He初期化）
-        layer_sizes = [input_size] + hidden_sizes + [output_size]
-        self.weights = [np.random.randn(layer_sizes[i], layer_sizes[i+1]) * np.sqrt(2.0/layer_sizes[i]) for i in range(len(layer_sizes) - 1)]
-        self.biases = [np.zeros((1, layer_sizes[i+1])) for i in range(len(layer_sizes) - 1)]
-    
-    # ====== 3. 順伝播 ======
-    def forward(self, X):
-        self.activations = [X]  
-        self.z_values = []  
+# ワンホットエンコーディング
+y_onehot = tf.keras.utils.to_categorical(y_encoded)
 
-        for i in range(len(self.weights) - 1):  
-            z = np.dot(self.activations[-1], self.weights[i]) + self.biases[i]
-            self.z_values.append(z)
-            self.activations.append(relu(z))
+# データ分割
+X_train, X_test, y_train, y_test = train_test_split(X, y_onehot, test_size=0.2, random_state=40)
 
-        # 出力層
-        z = np.dot(self.activations[-1], self.weights[-1]) + self.biases[-1]
-        self.z_values.append(z)
-        self.activations.append(softmax(z))
-        return self.activations[-1]
+print("X_train shape:", X_train.shape)
+print("X_test shape:", X_test.shape)
 
-    # ====== 4. 誤差逆伝播法 ======
-    def backward(self, X, y):
-        m = X.shape[0]  
-        grads_w = [np.zeros_like(w) for w in self.weights]
-        grads_b = [np.zeros_like(b) for b in self.biases]
+# ====== 2. モデル構築 ======
+model = tf.keras.models.Sequential([
+    tf.keras.layers.Input(shape=(X_train.shape[1],)),
+    tf.keras.layers.Dense(64, activation='relu'),
+    tf.keras.layers.Dense(64, activation='relu'),
+    tf.keras.layers.Dense(32, activation='relu'),
+    tf.keras.layers.Dense(32, activation='relu'),
+    tf.keras.layers.Dense(16, activation='relu'),
+    tf.keras.layers.Dense(3, activation='softmax')  # クラス数に応じて調整
+])
 
-        # One-hot エンコーディング
-        y_onehot = np.eye(self.activations[-1].shape[1])[y.astype(int)]  
-        dz = (self.activations[-1] - y_onehot) / m  
+# ====== 3. モデルコンパイル ======
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.01),
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
-        grads_w[-1] = np.dot(self.activations[-2].T, dz)
-        grads_b[-1] = np.sum(dz, axis=0, keepdims=True)
+# ====== 4. モデル訓練 ======
+history = model.fit(X_train, y_train, epochs=1000, batch_size=32, verbose=0)
 
-        for i in range(len(self.weights) - 2, -1, -1):
-            dz = np.dot(dz, self.weights[i+1].T) * relu_derivative(self.z_values[i])
-            grads_w[i] = np.dot(self.activations[i].T, dz)
-            grads_b[i] = np.sum(dz, axis=0, keepdims=True)
+# 途中経過を出力（例：100エポックごと）
+for epoch in range(0, 1000, 100):
+    acc = history.history['accuracy'][epoch]
+    print(f"Epoch {epoch}, Accuracy: {acc:.4f}")
 
-        # パラメータ更新（SGD）
-        for i in range(len(self.weights)):
-            self.weights[i] -= self.learning_rate * grads_w[i]
-            self.biases[i] -= self.learning_rate * grads_b[i]
+# ====== 5. テスト精度の評価 ======
+y_pred_probs = model.predict(X_test)
+y_pred = np.argmax(y_pred_probs, axis=1)
+y_true = np.argmax(y_test, axis=1)
 
-    # ====== 5. 訓練 ======
-    def train(self, X, y, epochs=1000, batch_size=32):
-        for epoch in range(epochs):
-            indices = np.arange(X.shape[0])
-            np.random.shuffle(indices)
-            X, y = X[indices], y[indices]
+acc = accuracy_score(y_true, y_pred)
+print(f"モデルの正解率: {acc:.2f}")
 
-            for i in range(0, X.shape[0], batch_size):
-                X_batch = X[i:i+batch_size]
-                y_batch = y[i:i+batch_size]
-                self.forward(X_batch)
-                self.backward(X_batch, y_batch)
-
-            if epoch % 100 == 0:
-                predictions = self.predict(X)
-                acc = np.mean(predictions == y)
-                print(f'Epoch {epoch}, Accuracy: {acc:.4f}')
-    
-    # ====== 6. 予測メソッドの追加 ======
-    def predict(self, X):
-        probabilities = self.forward(X)
-        return np.argmax(probabilities, axis=1)
-
-# ====== 7. データの準備と学習 ======
-if __name__ == "__main__":
-    # データを読み込む
-    df = pd.read_csv("data/hand_landmarks.csv")
-    
-    # 特徴量（X）とラベル（y）に分ける
-    X = df.drop('label', axis=1).values
-    y = df['label'].values
-    
-    # ラベルを数値にエンコード
-    label_encoder = LabelEncoder()
-    y_encoded = label_encoder.fit_transform(y)
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=40)
-
-    print("X_train shape:", X_train.shape)
-    print("X_test shape:", X_test.shape)
-
-
-    model = DeepNeuralNetwork(63)
-    model.train(X_train, y_train, epochs=1000, batch_size=32)
-
-    y_pred = model.predict(X_test)
-    
-    accuracy = accuracy_score(y_test, y_pred)
-    print(f'モデルの正解率: {accuracy:.2f}')
-    
-    joblib.dump(model, 'hand_gesture_model.pkl')
-    print('モデルを保存しました。')
+# ====== 6. モデル保存 ======
+model.save('hand_gesture_model_tf.h5')
+joblib.dump(label_encoder, 'label_encoder.pkl')
+print("モデルとエンコーダを保存しました。")
