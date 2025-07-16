@@ -1,8 +1,6 @@
-flask
+Flask
 opencv-python
 mediapipe
 numpy
-joblib
-pandas
 scikit-learn
 tensorflow

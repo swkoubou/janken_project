@@ -3,23 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <title>じゃんけん判定</title>
-    <script>
-        function updateGesture() {
-            fetch("/gesture_data")  // `/gesture_data` エンドポイントから手の判定結果を取得
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById("gesture").innerText = "現在の手: " + data.gesture;
-                })
-                .catch(error => console.error("エラー:", error));
-        }
-
-        setInterval(updateGesture, 500);
-    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.min.js"></script>
 </head>
 <body>
-    <h1>じゃんけん判定</h1>
-    <!-- <img> タグを使用してビデオフィードを取得 -->
-    <img src="{{ url_for('video_feed') }}" width="640" height="480">
-    <h2 id="gesture">現在の手: なし</h2>
+    <h1>じゃんけん判定（クライアント処理）</h1>
+    <video id="input_video" autoplay playsinline width="640" height="480" style="display: none;"></video>
+    <canvas id="output_canvas" width="640" height="480"></canvas>
+    <h2 id="gesture">現在の手: 認識中...</h2>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.8,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(async (results) => {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0].map(lm => [lm.x, lm.y, lm.z]).flat();
+
+                // サーバーへ送信
+                try {
+                    const res = await fetch("/gesture_data", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ landmarks: landmarks })
+                    });
+                    const data = await res.json();
+                    document.getElementById("gesture").innerText = "現在の手: " + data.gesture;
+                } catch (err) {
+                    console.error("送信エラー", err);
+                }
+
+                drawConnectors(canvasCtx, results.multiHandLandmarks[0], HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
+                drawLandmarks(canvasCtx, results.multiHandLandmarks[0], { color: '#FF0000', lineWidth: 1 });
+            } else {
+                document.getElementById("gesture").innerText = "現在の手: なし";
+            }
+
+            canvasCtx.restore();
+        });
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => await hands.send({ image: videoElement }),
+            width: 640,
+            height: 480
+        });
+        camera.start();
+    </script>
 </body>
 </html>
