@@ -1,88 +1,107 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import joblib
-import time
+import torch
+import torch.nn as nn
+from collections import deque
 
-# === モデルのロード ===
-MODEL_PATH = "../train_move/hand_classifier.pkl"
-model = joblib.load(MODEL_PATH)
+# ==============================
+# LSTMモデル（学習時と同じ構造）
+# ==============================
 
-# === MediaPipe Hands初期化 ===
-mp_drawing = mp.solutions.drawing_utils
+class JankenLSTM(nn.Module):
+    def __init__(self, input_size=63, hidden_size=128, num_layers=2, num_classes=3):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size, hidden_size, num_layers, batch_first=True
+        )
+        self.fc = nn.Linear(hidden_size, num_classes)
+
+    def forward(self, x):
+        # x : (1, T, 63)
+        out, (h, c) = self.lstm(x)
+        out = self.fc(h[-1])  # 最後の層のhidden
+        return out
+
+
+# ==============================
+# モデル読み込み
+# ==============================
+model = JankenLSTM()
+model.load_state_dict(torch.load("G:\マイドライブ\ソフトウェア工房\じゃんけん\データ\janken_lstm.pth", map_location="cpu"))
+model.eval()
+
+label_map = {0: "Guu", 1: "Choki", 2: "Paa"}
+
+
+
+# ==============================
+# MediaPipe Hands 設定
+# ==============================
 mp_hands = mp.solutions.hands
-
-# === 設定 ===
-FPS = 30
-SEQUENCE_LENGTH = int(1.2 * FPS)  # 1.2秒分のフレームを使用
-print("モデル読み込み完了。カメラ起動中...")
-
-# === カメラ起動 ===
-cap = cv2.VideoCapture(0)
-
-sequence = []  # フレームごとのランドマークデータを一時保存
-pred_label = "判定中..."
-
-with mp_hands.Hands(
+hands = mp_hands.Hands(
     max_num_hands=1,
     min_detection_confidence=0.7,
     min_tracking_confidence=0.5
-) as hands:
-    prev_time = time.time()
+)
+mp_draw = mp.solutions.drawing_utils
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
 
-        frame = cv2.flip(frame, 1)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = hands.process(rgb_frame)
+# ==============================
+# 時系列バッファ
+# ==============================
+SEQ_LEN = 20        # LSTM入力フレーム数
+buffer = deque(maxlen=SEQ_LEN)
 
-        if result.multi_hand_landmarks:
-            hand_landmarks = result.multi_hand_landmarks[0]
 
-            # 手首(0)を基準に相対座標
-            wrist = np.array([
-                hand_landmarks.landmark[0].x,
-                hand_landmarks.landmark[0].y,
-                hand_landmarks.landmark[0].z
-            ])
+# ==============================
+# カメラ起動
+# ==============================
+cap = cv2.VideoCapture(0)
 
-            frame_data = []
-            for lm in hand_landmarks.landmark:
-                frame_data.extend([
-                    lm.x - wrist[0],
-                    lm.y - wrist[1],
-                    lm.z - wrist[2]
-                ])
-            sequence.append(frame_data)
+print("=== リアルタイム じゃんけん推論開始 ===")
 
-            # === フレームが一定数たまったら予測 ===
-            if len(sequence) >= SEQUENCE_LENGTH:
-                input_data = np.array(sequence[:SEQUENCE_LENGTH]).flatten().reshape(1, -1)
-                pred_label = model.predict(input_data)[0]
-                sequence = []  # 使い終わったらリセット
+pred_text = "----"
 
-            # ランドマーク描画
-            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-        # === 結果の表示 ===
-        cv2.putText(frame, f"Prediction: {pred_label}", (10, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+    frame = cv2.flip(frame, 1)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # FPS表示
-        curr_time = time.time()
-        fps = 1 / (curr_time - prev_time)
-        prev_time = curr_time
-        cv2.putText(frame, f"FPS: {int(fps)}", (10, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    results = hands.process(rgb)
 
-        cv2.imshow("Real-time Hand Prediction", frame)
+    if results.multi_hand_landmarks:
+        hand_landmarks = results.multi_hand_landmarks[0]
+        mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-        # ESCキーで終了
-        if cv2.waitKey(1) & 0xFF == 27:
-            break
+        # 特徴量抽出（63次元）
+        row = []
+        for lm in hand_landmarks.landmark:
+            row.extend([lm.x, lm.y, lm.z])
+
+        buffer.append(row)
+
+        # バッファが満タンなら推論
+        if len(buffer) == SEQ_LEN:
+            seq = np.array(buffer, dtype=np.float32)  # (20, 63)
+            tensor = torch.tensor(seq).unsqueeze(0)   # (1,20,63)
+
+            with torch.no_grad():
+                out = model(tensor)
+                pred = torch.argmax(out, dim=1).item()
+                pred_text = label_map[pred]
+
+    # 結果表示
+    cv2.putText(frame, f"Predict: {pred_text}", (10, 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+
+    cv2.imshow("Real-time Janken AI", frame)
+
+    if cv2.waitKey(1) == 27:  # ESC
+        break
 
 cap.release()
 cv2.destroyAllWindows()

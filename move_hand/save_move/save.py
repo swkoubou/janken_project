@@ -1,109 +1,129 @@
 import cv2
 import mediapipe as mp
-import numpy as np
-import pandas as pd
-import time
+import csv
 import os
-import pygame
+import time
+from datetime import datetime
 
-# MediaPipe Handsの初期化
-mp_drawing = mp.solutions.drawing_utils
-mp_hands = mp.solutions.hands
-
-# 保存ディレクトリ
-SAVE_DIR = "data"
+# ======== 設定 ========
+SAVE_DIR = "G:\マイドライブ\ソフトウェア工房\じゃんけん\データ\janken_dataset"   # 保存フォルダ
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-# 記録時間（秒）を指定
-RECORD_TIME = 1.2
-FPS = 30
+# ======== MediaPipe Hands ========
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.5
+)
+mp_draw = mp.solutions.drawing_utils
 
-# 1サンプルあたりのフレーム数
-MAX_FRAMES = int(RECORD_TIME * FPS)
 
-# 使用するラベル（例：グー、チョキ、パー）
-LABEL = "パー"
+# ======== データ収集の状態管理 ========
+collecting = False
+current_label = None  # "g", "c", "p" のいずれか
+csv_writer = None
+csv_file = None
 
-def record_sequence():
-    data_records = []
-    cap = cv2.VideoCapture(0)
 
-    with mp_hands.Hands(
-        max_num_hands=1,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.5
-    ) as hands:
-        print("Recording started!")
+def start_new_csv(label):
+    """ラベルごとにCSVファイルを新規作成"""
+    global csv_writer, csv_file
 
-        start_time = time.time()
-        frame_index = 0
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"{label}_{timestamp}.csv"
+    path = os.path.join(SAVE_DIR, filename)
 
-        while frame_index < MAX_FRAMES:
-            ret, frame = cap.read()
-            if not ret:
-                break
+    csv_file = open(path, "w", newline="", encoding="utf-8")
+    csv_writer = csv.writer(csv_file)
 
-            frame = cv2.flip(frame, 1)
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            result = hands.process(rgb_frame)
+    # ヘッダー（landmark_0_x, landmark_0_y, ...）
+    header = []
+    for i in range(21):
+        header += [f"x_{i}", f"y_{i}", f"z_{i}"]
+    header.append("label")
+    csv_writer.writerow(header)
 
-            if result.multi_hand_landmarks:
-                hand_landmarks = result.multi_hand_landmarks[0]
+    print(f"[INFO] CSV作成: {path}")
 
-                # === 手首(0)を基準に相対座標を計算 ===
-                wrist = np.array([
-                    hand_landmarks.landmark[0].x,
-                    hand_landmarks.landmark[0].y,
-                    hand_landmarks.landmark[0].z
-                ])
 
-                for idx, lm in enumerate(hand_landmarks.landmark):
-                    relative_x = lm.x - wrist[0]
-                    relative_y = lm.y - wrist[1]
-                    relative_z = lm.z - wrist[2]
-                    data_records.append({
-                        "frame": frame_index,
-                        "landmark_id": idx,
-                        "x": relative_x,
-                        "y": relative_y,
-                        "z": relative_z,
-                        "label": LABEL
-                    })
+# ======== メインループ ========
+cap = cv2.VideoCapture(0)
+
+print("------ じゃんけんデータ収集ツール ------")
+print("[g] グー / [c] チョキ / [p] パー をセット")
+print("[SPACE] 収集の開始・停止")
+print("[ESC] 終了")
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    frame = cv2.flip(frame, 1)
+    img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = hands.process(img_rgb)
+
+    # ランドマーク検出
+    if results.multi_hand_landmarks:
+        hand_landmarks = results.multi_hand_landmarks[0]
+        mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+        # 収集中ならCSVに書き込み
+        if collecting and current_label is not None:
+            row = []
+            for lm in hand_landmarks.landmark:
+                row.extend([lm.x, lm.y, lm.z])
+            row.append(current_label)
+            csv_writer.writerow(row)
+
+    # UI表示
+    cv2.putText(frame, f"Label: {current_label}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+
+    cv2.putText(frame, f"Collecting: {collecting}", (10, 70),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
+
+    cv2.imshow("Janken Data Collector", frame)
+
+    key = cv2.waitKey(1)
+
+    # --- キー操作 ---
+    if key == ord('g'):
+        current_label = "g"
+        print("[SET] ラベル = グー")
+        #start_new_csv(current_label)
+
+    elif key == ord('c'):
+        current_label = "c"
+        print("[SET] ラベル = チョキ")
+        #start_new_csv(current_label)
+
+    elif key == ord('p'):
+        current_label = "p"
+        print("[SET] ラベル = パー")
+        #start_new_csv(current_label)
+
+    elif key == 32:  # Space
+        if current_label is None:
+            print("[WARN] ラベルを先に設定してください (g/c/p)")
+        else:
+            collecting = not collecting
+            print(f"[INFO] collecting = {collecting}")
+
+            if collecting:
+                start_new_csv(current_label)  # ★ ONになった瞬間に新しいCSV作成
             else:
-                for idx in range(21):
-                    data_records.append({
-                        "frame": frame_index,
-                        "landmark_id": idx,
-                        "x": 0.0,
-                        "y": 0.0,
-                        "z": 0.0,
-                        "label": LABEL
-                    })
+                if csv_file:
+                    csv_file.close()
+                    print("[INFO] CSV保存完了")
 
-                # 手のランドマーク描画
-                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+    elif key == 27:  # ESC
+        break
 
-            cv2.imshow("Recording", frame)
-            if cv2.waitKey(1) & 0xFF == 27:
-                break
+# 終了処理
+if csv_file:
+    csv_file.close()
 
-            frame_index += 1
-
-            # 時間超過チェック
-            if time.time() - start_time > RECORD_TIME:
-                break
-
-        cap.release()
-        cv2.destroyAllWindows()
-
-        # === CSV保存 ===
-        df = pd.DataFrame(data_records)
-        save_path = os.path.join(SAVE_DIR, f"{LABEL}_{int(time.time())}.csv")
-        df.to_csv(save_path, index=False)
-        print(f"Saved {len(df)} rows → {save_path}")
-
-if __name__ == "__main__":
-    pygame.mixer.init()
-    pygame.mixer.music.load("janken_voice.wav")
-    pygame.mixer.music.play()
-    record_sequence()
+cap.release()
+cv2.destroyAllWindows()
