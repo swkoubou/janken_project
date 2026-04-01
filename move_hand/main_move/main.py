@@ -8,7 +8,7 @@ import pygame
 import time
 
 # ==============================
-# LSTMモデル（学習時と同じ構造）
+# LSTMモデル
 # ==============================
 class JankenLSTM(nn.Module):
     def __init__(self, input_size=63, hidden_size=128, num_layers=2, num_classes=3):
@@ -18,7 +18,7 @@ class JankenLSTM(nn.Module):
 
     def forward(self, x):
         out, (h, c) = self.lstm(x)
-        return self.fc(out[:, -1, :]) # train.pyと同じく最後のタイムステップを使用
+        return self.fc(out[:, -1, :])
 
 # ==============================
 # 初期設定
@@ -27,7 +27,7 @@ pygame.mixer.init()
 VOICE_PATH = "janken_voice.mp3"
 MODEL_PATH = "janken_lstm.pth"
 LABEL_MAP = {0: "Guu", 1: "Choki", 2: "Paa"}
-SEQ_LEN = 15  # train.pyのSEQ_LENと合わせる
+SEQ_LEN = 15
 
 model = JankenLSTM()
 try:
@@ -48,7 +48,7 @@ mp_draw = mp.solutions.drawing_utils
 is_predicting = False
 start_time = 0
 pred_text = "READY"
-buffer = [] # 3.8s-4.5sの間のフレームを貯めるリスト
+buffer = [] # ここをリストとして使い、予測ごとにクリアする
 
 cap = cv2.VideoCapture(0)
 
@@ -68,21 +68,23 @@ while True:
     if is_predicting:
         elapsed = time.time() - start_time
         
-        # 3.8秒〜4.5秒の間だけバッファに溜める
-        if 3.8 <= elapsed <= 4.5:
+        # 4.0秒〜4.7秒の間だけ「相対座標」をバッファに貯める
+        if 4.0 <= elapsed <= 4.7:
             pred_text = "OBSERVING..."
             status_color = (0, 0, 255) # 赤
             if results.multi_hand_landmarks:
                 hand_landmarks = results.multi_hand_landmarks[0]
+                wrist = hand_landmarks.landmark[0]
+                w_x, w_y, w_z = wrist.x, wrist.y, wrist.z
+                
                 row = []
                 for lm in hand_landmarks.landmark:
-                    row.extend([lm.x, lm.y, lm.z])
+                    row.extend([lm.x - w_x, lm.y - w_y, lm.z - w_z])
                 buffer.append(row)
         
-        # 4.5秒を過ぎたら推論実行
-        elif elapsed > 4.5:
+        # 4.7秒を過ぎたら推論実行
+        elif elapsed > 4.7:
             if len(buffer) > 0:
-                # 形状を整える (1, SEQ_LEN, 63)
                 seq = np.array(buffer, dtype=np.float32)
                 if len(seq) < SEQ_LEN:
                     pad = np.zeros((SEQ_LEN - len(seq), 63))
@@ -97,16 +99,16 @@ while True:
                     pred_idx = torch.argmax(output, dim=1).item()
                     pred_text = f"RESULT: {LABEL_MAP[pred_idx]}"
                 
-                buffer = [] # バッファをクリア
+                buffer = [] # 次のために空にする
             else:
                 pred_text = "NO HAND DETECTED"
             
-            is_predicting = False # 1回の予測サイクル終了
+            is_predicting = False
         else:
             pred_text = f"WAITING... ({elapsed:.1f}s)"
-            status_color = (255, 255, 0) # 黄色
+            status_color = (255, 255, 0)
 
-    # ランドマーク描画
+    # ランドマーク描画（ここは常に表示）
     if results.multi_hand_landmarks:
         mp_draw.draw_landmarks(frame, results.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
 
@@ -117,7 +119,7 @@ while True:
     key = cv2.waitKey(1) & 0xFF
     if key == 32: # SPACE
         if not is_predicting:
-            buffer = []
+            buffer = [] # 完全にリセット
             pygame.mixer.music.load(VOICE_PATH)
             pygame.mixer.music.play()
             start_time = time.time()
